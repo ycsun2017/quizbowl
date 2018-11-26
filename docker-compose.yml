@@ -1,7 +1,8 @@
 version: '3'
 services:
   qb:
-    image: "docker.io/entilzha/quizbowl:0.1"
+    build: .
+    image: "qanta-codalab"
     ports:
       - "4861:4861"
     volumes:
@@ -9,7 +10,7 @@ services:
       - ./data/:/src/data
     command: ["bash", "run.sh"]
   eval:
-    image: "docker.io/entilzha/quizbowl:0.1"
+    image: "qanta-codalab"
     volumes:
       - ./src/:/src
       - ./data/:/src/data
@@ -17,7 +18,7 @@ services:
     command: [
       "python", "/eval/evaluate.py",
       "--curve-pkl", "/eval/curve_pipeline.pkl",
-      "--wait", "5",
+      "--wait", "10",
       "--hostname", "qb",
       "--norun-web",
       "--char_step_size", "600",
