@@ -9,6 +9,9 @@ dependencies:
   - requests
   - click
   - flask
-  - gensim
+  - termcolor
+  - regex
+  - tqdm
+  - pexpect==4.2.1
 channels:
   - pytorch

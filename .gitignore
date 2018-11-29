@@ -1,8 +1,12 @@
 src/predictions.json
 src/scores.json
+predictions.json
+src/glove.840B.300d.txt
 data/*
 models/*
 *.pickle
+*.mdl
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

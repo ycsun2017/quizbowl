@@ -68,16 +68,23 @@ def retry_get_url(url, retries=5, delay=3):
 
 
 def get_question_query(qid, question, char_idx):
+    contexts = []
+    for article in question['annotated_paras']:
+        for paras in article:
+            contexts.append(paras["paragraph"])
     char_idx = min(char_idx, len(question['text']))
     for sent_idx, (st, ed) in enumerate(question['tokenizations']):
         if char_idx >= st and char_idx <= ed:
             break
+        
     query = {
             'question_idx': qid,
             'sent_index': sent_idx,
             'char_index': char_idx,
-            'text': question['text'][:char_idx]
+            'text': question['text'][:char_idx],
+            'contexts': contexts
     }
+#    print(query)
     return query
 
 
@@ -93,6 +100,7 @@ def get_answer_single(url, questions, char_step_size):
             query = get_question_query(question_idx, q, char_idx)
             resp = requests.post(url, json=query).json()
             query.update(resp)
+            query.pop("contexts")
             answers[-1].append(query)
     return answers
 
@@ -113,11 +121,11 @@ def get_answer_batch(url, questions, char_step_size, batch_size):
                 query['questions'].append(
                     get_question_query(qids[i], q, char_idx))
             resp_raw = requests.post(url, json=query)
-#            print("Raw: ", resp_raw)
             resp = resp_raw.json()
             for i, r in enumerate(resp):
                 q = query['questions'][i]
                 q.update(r)
+                q.pop("contexts")
                 answers[qids[i]].append(q)
     return answers
 
@@ -152,7 +160,7 @@ def evaluate(input_dir, output_dir, score_dir, char_step_size, hostname,
             raise ValueError('Status API could not be reached')
 
         with open(input_dir) as f:
-            questions = json.load(f)['questions']
+            questions = json.load(f)['questions'][:40]
         if status is not None and status['batch'] is True:
             url = f'http://{hostname}:4861/api/1.0/quizbowl/batch_act'
             answers = get_answer_batch(url, questions,

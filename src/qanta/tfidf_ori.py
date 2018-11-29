@@ -11,14 +11,12 @@ from flask import Flask, jsonify, request
 
 from qanta import util
 from qanta.dataset import QuizBowlDataset
-import gensim as g
-from sklearn import preprocessing
-import numpy as np
+
 
 MODEL_PATH = 'tfidf.pickle'
 BUZZ_NUM_GUESSES = 10
-BUZZ_THRESHOLD = 0.7
-w2v=g.models.KeyedVectors.load_word2vec_format('FullModel.bin', binary=True)
+BUZZ_THRESHOLD = 0.3
+
 
 def guess_and_buzz(model, question_text) -> Tuple[str, bool]:
     guesses = model.guess([question_text], BUZZ_NUM_GUESSES)[0]
@@ -42,24 +40,15 @@ class TfidfGuesser:
         self.tfidf_vectorizer = None
         self.tfidf_matrix = None
         self.i_to_ans = None
-        self.answers_vecs = None
+
     def train(self, training_data) -> None:
         questions = training_data[0]
         answers = training_data[1]
         answer_docs = defaultdict(str)
-        self.answers_vecs = {}
         for q, ans in zip(questions, answers):
             text = ' '.join(q)
             answer_docs[ans] += ' ' + text
-            self.answers_vecs[ans] = [0]*300
-            for word in q:
-                if word in w2v:
-                    self.answers_vecs[ans] += w2v[word]
-            if ans in w2v:
-                self.answers_vecs[ans]=preprocessing.normalize([self.answers_vecs[ans]])[0]
-                self.answers_vecs[ans]+=w2v[ans]
-                self.answers_vecs[ans]=preprocessing.normalize([self.answers_vecs[ans]])[0]
-        
+
         x_array = []
         y_array = []
         for ans, doc in answer_docs.items():
@@ -79,24 +68,8 @@ class TfidfGuesser:
         guesses = []
         for i in range(len(questions)):
             idxs = guess_indices[i]
-            qrep=[0]*300
-            for word in questions[i]:
-                if word in w2v:
-#                    print("Type: ", type(w2v[word]))
-                    qrep+=w2v[word]
-            qrep=preprocessing.normalize([qrep])[0]
-#            guesses.append([(self.i_to_ans[j], guess_matrix[i, j]+np.dot(w2v[self.i_to_ans[j], qrep])) for j in idxs])
-            
-            for j in idxs:
-#                print(self.i_to_ans[j])
-#                print(guess_matrix[i, j])
-#                print(self.answers_vecs[self.i_to_ans[j]])
-#                print(qrep)
-                if self.i_to_ans[j] in self.answers_vecs:
-                    guesses.append([(self.i_to_ans[j], guess_matrix[i, j]+np.dot(self.answers_vecs[self.i_to_ans[j]], qrep))])
-        """
-        把距离计算加这了
-        """
+            guesses.append([(self.i_to_ans[j], guess_matrix[i, j]) for j in idxs])
+
         return guesses
 
     def save(self):
@@ -163,7 +136,6 @@ def web(host, port, disable_batch):
     """
     app = create_app(enable_batch=not disable_batch)
     app.run(host=host, port=port, debug=False)
-    print(port, host)
 
 
 @cli.command()
