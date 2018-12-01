@@ -118,7 +118,7 @@ class DrqaPredictor:
             model=DRQA_MODEL_PATH,
             tokenizer='regexp',
             embedding_file=None,
-            num_workers=None
+            num_workers=0
         )
         return drqa_predictor
 
@@ -201,7 +201,7 @@ def create_app(enable_batch=True):
     def status():
         return jsonify({
             'batch': enable_batch,
-            'batch_size': 200,
+            'batch_size': 2,
             'ready': True
         })
 
@@ -245,6 +245,12 @@ def train():
     tfidf_guesser.train(dataset.training_data())
     tfidf_guesser.save()
 
+@cli.command()
+def drqa_train():
+    """
+    Train the drqa model, requires preprocessed data
+    """
+    pass
 
 @cli.command()
 @click.option('--local-qanta-prefix', default='data/')

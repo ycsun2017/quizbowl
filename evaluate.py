@@ -102,10 +102,11 @@ def get_answer_single(url, questions, char_step_size):
             query.update(resp)
             query.pop("contexts")
             answers[-1].append(query)
+        
     return answers
 
 
-def get_answer_batch(url, questions, char_step_size, batch_size):
+def get_answer_batch(url, questions, char_step_size, batch_size, output_dir):
     elog.info('Collecting responses to questions in batches', batch_size)
     answers = []
     batch_ids = list(range(0, len(questions), batch_size))
@@ -127,6 +128,9 @@ def get_answer_batch(url, questions, char_step_size, batch_size):
                 q.update(r)
                 q.pop("contexts")
                 answers[qids[i]].append(q)
+        #save after each batch
+        with open(output_dir, 'w') as f:
+            json.dump(answers, f)
     return answers
 
 
@@ -160,19 +164,20 @@ def evaluate(input_dir, output_dir, score_dir, char_step_size, hostname,
             raise ValueError('Status API could not be reached')
 
         with open(input_dir) as f:
-            questions = json.load(f)['questions'][:40]
+            questions = json.load(f)['questions']
         if status is not None and status['batch'] is True:
             url = f'http://{hostname}:4861/api/1.0/quizbowl/batch_act'
+            
             answers = get_answer_batch(url, questions,
                                        char_step_size,
-                                       status['batch_size'])
+                                       status['batch_size'], output_dir)
         else:
             url = f'http://{hostname}:4861/api/1.0/quizbowl/act'
             answers = get_answer_single(url, questions,
                                         char_step_size)
 
-        with open(output_dir, 'w') as f:
-            json.dump(answers, f)
+#        with open(output_dir, 'w') as f:
+#            json.dump(answers, f)
 
         elog.info('Computing curve score of results')
         curve_score = CurveScore(curve_pkl=curve_pkl)
