@@ -87,6 +87,26 @@ def get_question_query(qid, question, char_idx):
 #    print(query)
     return query
 
+def get_question_query_cand(qid, question, char_idx):
+    cands = []
+    for article in question['annotated_paras']:
+        for paras in article:
+            for ent in paras["entities"]:
+                cands.append(ent[0])
+    char_idx = min(char_idx, len(question['text']))
+    for sent_idx, (st, ed) in enumerate(question['tokenizations']):
+        if char_idx >= st and char_idx <= ed:
+            break
+        
+    query = {
+            'question_idx': qid,
+            'sent_index': sent_idx,
+            'char_index': char_idx,
+            'text': question['text'][:char_idx],
+            'candidates': cands
+    }
+#    print(query)
+    return query
 
 def get_answer_single(url, questions, char_step_size):
     elog.info('Collecting responses to questions')
@@ -133,6 +153,32 @@ def get_answer_batch(url, questions, char_step_size, batch_size, output_dir):
             json.dump(answers, f)
     return answers
 
+def get_answer_batch_cand(url, questions, char_step_size, batch_size, output_dir):
+    elog.info('Collecting responses to questions in batches', batch_size)
+    answers = []
+    batch_ids = list(range(0, len(questions), batch_size))
+    for batch_idx in tqdm(batch_ids):
+        batch_ed = min(len(questions), batch_idx + batch_size)
+        qs = questions[batch_idx: batch_ed]
+        max_len = max(len(q['text']) for q in qs)
+        qids = list(range(batch_idx, batch_ed))
+        answers += [[] for _ in qs]
+        for char_idx in range(1, max_len + char_step_size, char_step_size):
+            query = {'questions': []}
+            for i, q in enumerate(qs):
+                query['questions'].append(
+                    get_question_query_cand(qids[i], q, char_idx))
+            resp_raw = requests.post(url, json=query)
+            resp = resp_raw.json()
+            for i, r in enumerate(resp):
+                q = query['questions'][i]
+                q.update(r)
+                q.pop("candidates")
+                answers[qids[i]].append(q)
+        #save after each batch
+        with open(output_dir, 'w') as f:
+            json.dump(answers, f)
+    return answers
 
 def check_port(hostname, port):
     pass
@@ -165,16 +211,21 @@ def evaluate(input_dir, output_dir, score_dir, char_step_size, hostname,
 
         with open(input_dir) as f:
             questions = json.load(f)['questions']
-        if status is not None and status['batch'] is True:
-            url = f'http://{hostname}:4861/api/1.0/quizbowl/batch_act'
+        url = f'http://{hostname}:4861/api/1.0/quizbowl/batch_act_cand'
             
-            answers = get_answer_batch(url, questions,
-                                       char_step_size,
-                                       status['batch_size'], output_dir)
-        else:
-            url = f'http://{hostname}:4861/api/1.0/quizbowl/act'
-            answers = get_answer_single(url, questions,
-                                        char_step_size)
+        answers = get_answer_batch_cand(url, questions,
+                                   char_step_size,
+                                   50, output_dir)
+#        if status is not None and status['batch'] is True:
+#            url = f'http://{hostname}:4861/api/1.0/quizbowl/batch_act'
+#            
+#            answers = get_answer_batch(url, questions,
+#                                       char_step_size,
+#                                       status['batch_size'], output_dir)
+#        else:
+#            url = f'http://{hostname}:4861/api/1.0/quizbowl/act'
+#            answers = get_answer_single(url, questions,
+#                                        char_step_size)
 
 #        with open(output_dir, 'w') as f:
 #            json.dump(answers, f)

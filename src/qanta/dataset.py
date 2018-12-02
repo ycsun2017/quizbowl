@@ -75,7 +75,7 @@ class Question(NamedTuple):
 
 
 class QantaDatabase:
-    def __init__(self, dataset_path=os.path.join('data', QANTA_MAPPED_DATASET_PATH)):
+    def __init__(self, dataset_path=os.path.join('../data', QANTA_MAPPED_DATASET_PATH)):
         with open(dataset_path) as f:
             self.dataset = json.load(f)
 

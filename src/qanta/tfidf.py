@@ -16,7 +16,7 @@ from qanta.dataset import QuizBowlDataset
 from drqa.reader import Predictor
 
 DRQA_MODEL_PATH = 'drqa.mdl'
-MODEL_PATH = 'tfidf.pickle'
+MODEL_PATH = 'tfidf2.pickle'
 EMBEDDING_PATH = 'glove.840B.300d.txt'
 BUZZ_NUM_GUESSES = 10
 BUZZ_THRESHOLD = 0.3
@@ -53,6 +53,18 @@ def batch_guess_and_buzz(model, predictor, questions) -> List[Tuple[str, bool]]:
             outputs.append(tfidf_results[i])
     
     return outputs
+
+def batch_guess_and_buzz_cand(model, questions):
+    ques = [q["text"] for q in questions]
+    cands = [q["candidates"] for q in questions]
+    question_guesses = model.guess_with_cand(ques, cands)
+    outputs = []
+    for guesses in question_guesses:
+        scores = [guess[1] for guess in guesses]
+        buzz = scores[0] / sum(scores) >= BUZZ_THRESHOLD
+        outputs.append((guesses[0][0], buzz))
+    return outputs
+
 
 class DrqaPredictor:
     def __init__(self):
@@ -122,12 +134,12 @@ class DrqaPredictor:
         )
         return drqa_predictor
 
-class TfidfGuesser:
+class TfidfContextGuesser:
     def __init__(self):
         self.tfidf_vectorizer = None
         self.tfidf_matrix = None
-        self.i_to_ans = None
-
+        self.ans_to_i = None
+    
     def train(self, training_data) -> None:
         questions = training_data[0]
         answers = training_data[1]
@@ -142,27 +154,36 @@ class TfidfGuesser:
             x_array.append(doc)
             y_array.append(ans)
 
-        self.i_to_ans = {i: ans for i, ans in enumerate(y_array)}
+        self.ans_to_i = {ans: i for i, ans in enumerate(y_array)}
         self.tfidf_vectorizer = TfidfVectorizer(
             ngram_range=(1, 3), min_df=2, max_df=.9
         ).fit(x_array)
         self.tfidf_matrix = self.tfidf_vectorizer.transform(x_array)
-
-    def guess(self, questions: List[str], max_n_guesses: Optional[int]) -> List[List[Tuple[str, float]]]:
+    
+    def guess_with_cand(self, questions: List[str], candidates: List[List[str]]) -> List[List[Tuple[str, float]]]:
         representations = self.tfidf_vectorizer.transform(questions)
         guess_matrix = self.tfidf_matrix.dot(representations.T).T
-        guess_indices = (-guess_matrix).toarray().argsort(axis=1)[:, 0:max_n_guesses]
         guesses = []
+        
         for i in range(len(questions)):
-            idxs = guess_indices[i]
-            guesses.append([(self.i_to_ans[j], guess_matrix[i, j]) for j in idxs])
+            guess = []
+            for cand in candidates[i]:
+                if cand is not None:
+                    cand1 = cand.replace(" ", "_")
+                    if cand1 in self.ans_to_i.keys():
+                        guess.append((cand1, guess_matrix[i, self.ans_to_i[cand1]]))
+            guess.sort(key=lambda x: x[1], reverse=True)
+            guesses.append(guess[:10])
+#            if i % 500 == 0:
+#                print(i, ":")
+#                print(guess)
 
         return guesses
 
     def save(self):
         with open(MODEL_PATH, 'wb') as f:
             pickle.dump({
-                'i_to_ans': self.i_to_ans,
+                'ans_to_i': self.ans_to_i,
                 'tfidf_vectorizer': self.tfidf_vectorizer,
                 'tfidf_matrix': self.tfidf_matrix
             }, f)
@@ -171,15 +192,70 @@ class TfidfGuesser:
     def load(cls):
         with open(MODEL_PATH, 'rb') as f:
             params = pickle.load(f)
-            guesser = TfidfGuesser()
+            guesser = TfidfContextGuesser()
             guesser.tfidf_vectorizer = params['tfidf_vectorizer']
             guesser.tfidf_matrix = params['tfidf_matrix']
-            guesser.i_to_ans = params['i_to_ans']
+            guesser.ans_to_i = params['ans_to_i']
             return guesser
+
+#class TfidfGuesser:
+#    def __init__(self):
+#        self.tfidf_vectorizer = None
+#        self.tfidf_matrix = None
+#        self.i_to_ans = None
+#
+#    def train(self, training_data) -> None:
+#        questions = training_data[0]
+#        answers = training_data[1]
+#        answer_docs = defaultdict(str)
+#        for q, ans in zip(questions, answers):
+#            text = ' '.join(q)
+#            answer_docs[ans] += ' ' + text
+#
+#        x_array = []
+#        y_array = []
+#        for ans, doc in answer_docs.items():
+#            x_array.append(doc)
+#            y_array.append(ans)
+#
+#        self.i_to_ans = {i: ans for i, ans in enumerate(y_array)}
+#        self.tfidf_vectorizer = TfidfVectorizer(
+#            ngram_range=(1, 3), min_df=2, max_df=.9
+#        ).fit(x_array)
+#        self.tfidf_matrix = self.tfidf_vectorizer.transform(x_array)
+#
+#    def guess(self, questions: List[str], max_n_guesses: Optional[int]) -> List[List[Tuple[str, float]]]:
+#        representations = self.tfidf_vectorizer.transform(questions)
+#        guess_matrix = self.tfidf_matrix.dot(representations.T).T
+#        guess_indices = (-guess_matrix).toarray().argsort(axis=1)[:, 0:max_n_guesses]
+#        guesses = []
+#        for i in range(len(questions)):
+#            idxs = guess_indices[i]
+#            guesses.append([(self.i_to_ans[j], guess_matrix[i, j]) for j in idxs])
+#
+#        return guesses
+#
+#    def save(self):
+#        with open(MODEL_PATH, 'wb') as f:
+#            pickle.dump({
+#                'i_to_ans': self.i_to_ans,
+#                'tfidf_vectorizer': self.tfidf_vectorizer,
+#                'tfidf_matrix': self.tfidf_matrix
+#            }, f)
+#
+#    @classmethod
+#    def load(cls):
+#        with open(MODEL_PATH, 'rb') as f:
+#            params = pickle.load(f)
+#            guesser = TfidfGuesser()
+#            guesser.tfidf_vectorizer = params['tfidf_vectorizer']
+#            guesser.tfidf_matrix = params['tfidf_matrix']
+#            guesser.i_to_ans = params['i_to_ans']
+#            return guesser
 
 
 def create_app(enable_batch=True):
-    tfidf_guesser = TfidfGuesser.load()
+    tfidf_guesser = TfidfContextGuesser.load()
     drqa_predictor = DrqaPredictor.load()
     print("loaded models")
     app = Flask(__name__)
@@ -201,7 +277,7 @@ def create_app(enable_batch=True):
     def status():
         return jsonify({
             'batch': enable_batch,
-            'batch_size': 2,
+            'batch_size': 200,
             'ready': True
         })
 
@@ -212,7 +288,14 @@ def create_app(enable_batch=True):
             {'guess': guess, 'buzz': True if buzz else False}
             for guess, buzz in batch_guess_and_buzz(tfidf_guesser, drqa_predictor, questions)
         ])
-
+    
+    @app.route('/api/1.0/quizbowl/batch_act_cand', methods=['POST'])
+    def batch_act_cand():
+        questions = [q for q in request.json['questions']]
+        return jsonify([
+            {'guess': guess, 'buzz': True if buzz else False}
+            for guess, buzz in batch_guess_and_buzz_cand(tfidf_guesser, questions)
+        ])
 
     return app
 
@@ -242,6 +325,16 @@ def train():
     """
     dataset = QuizBowlDataset(guesser_train=True)
     tfidf_guesser = TfidfGuesser()
+    tfidf_guesser.train(dataset.training_data())
+    tfidf_guesser.save()
+
+@cli.command()
+def train_entities():
+    """
+    Train the tfidf model with context
+    """
+    dataset = QuizBowlDataset(guesser_train=True)
+    tfidf_guesser = TfidfContextGuesser()
     tfidf_guesser.train(dataset.training_data())
     tfidf_guesser.save()
 
