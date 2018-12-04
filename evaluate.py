@@ -67,11 +67,11 @@ def retry_get_url(url, retries=5, delay=3):
     return None
 
 
-def get_question_query(qid, question, char_idx):
-    contexts = []
-    for article in question['annotated_paras']:
-        for paras in article:
-            contexts.append(paras["paragraph"])
+def get_question_query(qid, question, contexts, char_idx):
+#    contexts = []
+#    for article in question['annotated_paras']:
+#        for paras in article:
+#            contexts.append(paras["paragraph"])
     char_idx = min(char_idx, len(question['text']))
     for sent_idx, (st, ed) in enumerate(question['tokenizations']):
         if char_idx >= st and char_idx <= ed:
@@ -126,7 +126,7 @@ def get_answer_single(url, questions, char_step_size):
     return answers
 
 
-def get_answer_batch(url, questions, char_step_size, batch_size, output_dir):
+def get_answer_batch(url, questions, contexts, char_step_size, batch_size, output_dir):
     elog.info('Collecting responses to questions in batches', batch_size)
     answers = []
     batch_ids = list(range(0, len(questions), batch_size))
@@ -139,8 +139,9 @@ def get_answer_batch(url, questions, char_step_size, batch_size, output_dir):
         for char_idx in range(1, max_len + char_step_size, char_step_size):
             query = {'questions': []}
             for i, q in enumerate(qs):
+                print(q["qanta_id"])
                 query['questions'].append(
-                    get_question_query(qids[i], q, char_idx))
+                    get_question_query(qids[i], q, contexts[q["qanta_id"]], char_idx))
             resp_raw = requests.post(url, json=query)
             resp = resp_raw.json()
             for i, r in enumerate(resp):
@@ -211,6 +212,19 @@ def evaluate(input_dir, output_dir, score_dir, char_step_size, hostname,
 
         with open(input_dir) as f:
             questions = json.load(f)['questions']
+        
+#        with open("data/qanta.dev.paragraphs.2018.04.18.jsonl",'r') as f1:
+#            contexts = {}
+#            for line in f1:
+#                c = json.loads(line)
+#                text = ""
+#                for paras in c["annotated_paras"]:
+#                    for p in paras:
+#                        for en in p["entities"]:
+#                            if en[0] is not None:
+#                                text += en[0].replace(" ","_") + " "
+#                contexts[c["qanta_id"]] = text
+        
         url = f'http://{hostname}:4861/api/1.0/quizbowl/batch_act_cand'
             
         answers = get_answer_batch_cand(url, questions,
@@ -219,9 +233,9 @@ def evaluate(input_dir, output_dir, score_dir, char_step_size, hostname,
 #        if status is not None and status['batch'] is True:
 #            url = f'http://{hostname}:4861/api/1.0/quizbowl/batch_act'
 #            
-#            answers = get_answer_batch(url, questions,
+#            answers = get_answer_batch(url, questions, contexts,
 #                                       char_step_size,
-#                                       status['batch_size'], output_dir)
+#                                       status["batch_size"], output_dir)
 #        else:
 #            url = f'http://{hostname}:4861/api/1.0/quizbowl/act'
 #            answers = get_answer_single(url, questions,

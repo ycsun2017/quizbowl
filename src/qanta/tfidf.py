@@ -57,14 +57,13 @@ def batch_guess_and_buzz(model, predictor, questions) -> List[Tuple[str, bool]]:
 def batch_guess_and_buzz_cand(model, questions):
     ques = [q["text"] for q in questions]
     cands = [q["candidates"] for q in questions]
-    question_guesses = model.guess_with_cand(ques, cands)
+    question_guesses = model.guess_with_cand(ques, cands, BUZZ_NUM_GUESSES)
     outputs = []
     for guesses in question_guesses:
         scores = [guess[1] for guess in guesses]
         buzz = scores[0] / sum(scores) >= BUZZ_THRESHOLD
         outputs.append((guesses[0][0], buzz))
     return outputs
-
 
 class DrqaPredictor:
     def __init__(self):
@@ -78,9 +77,7 @@ class DrqaPredictor:
         examples = []
         for context in contexts:
             examples.append((context, question_text))
-#        print("now drqa-----------------")
-#        print("examples", len(examples))
-#        print(examples[0])
+
         predictions = predictor.predict_batch(
             examples, top_n=1
         )
@@ -97,30 +94,40 @@ class DrqaPredictor:
     
     @classmethod
     def batch_predict(cls, predictor, questions):
+#        examples = []
+#        qids = []  #number of parallel contexts of each question
+#        for ques in questions:
+#            question_text = ques["text"]
+#            qids.append(len(ques["contexts"]))
+#            for context in ques["contexts"]:
+#                examples.append((context, question_text))
+#        predictions = predictor.predict_batch(
+#            examples, top_n=1
+#        )
+        
         examples = []
         qids = []  #number of parallel contexts of each question
         for ques in questions:
-            question_text = ques["text"]
-#            print(question_text)
-            qids.append(len(ques["contexts"]))
-            for context in ques["contexts"]:
-                examples.append((context, question_text))
+            print(ques["question_idx"])
+            examples.append((ques["contexts"], ques["text"]))
         predictions = predictor.predict_batch(
             examples, top_n=1
         )
-#        print(qids)
-        
-        results = []    #a list of output results (text, score)
-        t = 0
+        results = []
         for i in range(len(questions)):
-            best_guess = None
-            best_score = -1
-            for j in range(qids[i]): #for each question
-                if predictions[t][0][1] > best_score:
-                    best_guess = predictions[t][0][0]
-                    best_score = predictions[t][0][1]
-                t += 1
-            results.append((best_guess, best_score))
+            results.append((predictions[i][0][0],predictions[i][0][1]))
+        
+#        results = []    #a list of output results (text, score)
+#        t = 0
+#        for i in range(len(questions)):
+#            best_guess = None
+#            best_score = -1
+#            for j in range(qids[i]): #for each question
+#                if predictions[t][0][1] > best_score:
+#                    best_guess = predictions[t][0][0]
+#                    best_score = predictions[t][0][1]
+#                t += 1
+#            results.append((best_guess, best_score))
 #        print(t, len(predictions))
         return results
     
@@ -138,6 +145,7 @@ class TfidfContextGuesser:
     def __init__(self):
         self.tfidf_vectorizer = None
         self.tfidf_matrix = None
+#        self.i_to_ans = None
         self.ans_to_i = None
     
     def train(self, training_data) -> None:
@@ -160,20 +168,33 @@ class TfidfContextGuesser:
         ).fit(x_array)
         self.tfidf_matrix = self.tfidf_vectorizer.transform(x_array)
     
-    def guess_with_cand(self, questions: List[str], candidates: List[List[str]]) -> List[List[Tuple[str, float]]]:
+    def guess_with_cand(self, questions: List[str], candidates: List[List[str]], max_n_guesses: Optional[int]) -> List[List[Tuple[str, float]]]:
         representations = self.tfidf_vectorizer.transform(questions)
         guess_matrix = self.tfidf_matrix.dot(representations.T).T
         guesses = []
-        
+
+#        for i in range(len(questions)):
+#            idxs = guess_indices[i]
+#            guesses.append([(self.i_to_ans[j], guess_matrix[i, j]) for j in idxs if self.i_to_ans[j].replace("_"," ") in candidates[i]])
+
         for i in range(len(questions)):
-            guess = []
-            for cand in candidates[i]:
-                if cand is not None:
-                    cand1 = cand.replace(" ", "_")
-                    if cand1 in self.ans_to_i.keys():
-                        guess.append((cand1, guess_matrix[i, self.ans_to_i[cand1]]))
-            guess.sort(key=lambda x: x[1], reverse=True)
-            guesses.append(guess[:10])
+            cands = [cand.replace(" ", "_") for cand in candidates[i] if cand is not None and cand.replace(" ", "_") in self.ans_to_i.keys()]
+            cand_ind = [self.ans_to_i[c] for c in cands]
+            scores = [guess_matrix[i, j] for j in cand_ind]
+            guess = sorted(zip(cands, scores), key=lambda x: x[1], reverse=True)
+#            print(len(guess))
+            guesses.append(guess[:max_n_guesses])
+            
+        
+#        for i in range(len(questions)):
+#            guess = []
+#            for cand in candidates[i]:
+#                if cand is not None:
+#                    cand1 = cand.replace(" ", "_")
+#                    if cand1 in self.ans_to_i.keys():
+#                        guess.append((cand1, guess_matrix[i, self.ans_to_i[cand1]]))
+#            guess.sort(key=lambda x: x[1], reverse=True)
+#            guesses.append(guess[:10])
 #            if i % 500 == 0:
 #                print(i, ":")
 #                print(guess)
@@ -196,67 +217,69 @@ class TfidfContextGuesser:
             guesser.tfidf_vectorizer = params['tfidf_vectorizer']
             guesser.tfidf_matrix = params['tfidf_matrix']
             guesser.ans_to_i = params['ans_to_i']
+#            guesser.i_to_ans = params['i_to_ans']
             return guesser
 
-#class TfidfGuesser:
-#    def __init__(self):
-#        self.tfidf_vectorizer = None
-#        self.tfidf_matrix = None
-#        self.i_to_ans = None
-#
-#    def train(self, training_data) -> None:
-#        questions = training_data[0]
-#        answers = training_data[1]
-#        answer_docs = defaultdict(str)
-#        for q, ans in zip(questions, answers):
-#            text = ' '.join(q)
-#            answer_docs[ans] += ' ' + text
-#
-#        x_array = []
-#        y_array = []
-#        for ans, doc in answer_docs.items():
-#            x_array.append(doc)
-#            y_array.append(ans)
-#
-#        self.i_to_ans = {i: ans for i, ans in enumerate(y_array)}
-#        self.tfidf_vectorizer = TfidfVectorizer(
-#            ngram_range=(1, 3), min_df=2, max_df=.9
-#        ).fit(x_array)
-#        self.tfidf_matrix = self.tfidf_vectorizer.transform(x_array)
-#
-#    def guess(self, questions: List[str], max_n_guesses: Optional[int]) -> List[List[Tuple[str, float]]]:
-#        representations = self.tfidf_vectorizer.transform(questions)
-#        guess_matrix = self.tfidf_matrix.dot(representations.T).T
-#        guess_indices = (-guess_matrix).toarray().argsort(axis=1)[:, 0:max_n_guesses]
-#        guesses = []
-#        for i in range(len(questions)):
-#            idxs = guess_indices[i]
-#            guesses.append([(self.i_to_ans[j], guess_matrix[i, j]) for j in idxs])
-#
-#        return guesses
-#
-#    def save(self):
-#        with open(MODEL_PATH, 'wb') as f:
-#            pickle.dump({
-#                'i_to_ans': self.i_to_ans,
-#                'tfidf_vectorizer': self.tfidf_vectorizer,
-#                'tfidf_matrix': self.tfidf_matrix
-#            }, f)
-#
-#    @classmethod
-#    def load(cls):
-#        with open(MODEL_PATH, 'rb') as f:
-#            params = pickle.load(f)
-#            guesser = TfidfGuesser()
-#            guesser.tfidf_vectorizer = params['tfidf_vectorizer']
-#            guesser.tfidf_matrix = params['tfidf_matrix']
-#            guesser.i_to_ans = params['i_to_ans']
-#            return guesser
+class TfidfGuesser:
+    def __init__(self):
+        self.tfidf_vectorizer = None
+        self.tfidf_matrix = None
+        self.i_to_ans = None
+
+    def train(self, training_data) -> None:
+        questions = training_data[0]
+        answers = training_data[1]
+        answer_docs = defaultdict(str)
+        for q, ans in zip(questions, answers):
+            text = ' '.join(q)
+            answer_docs[ans] += ' ' + text
+
+        x_array = []
+        y_array = []
+        for ans, doc in answer_docs.items():
+            x_array.append(doc)
+            y_array.append(ans)
+
+        self.i_to_ans = {i: ans for i, ans in enumerate(y_array)}
+        self.tfidf_vectorizer = TfidfVectorizer(
+            ngram_range=(1, 3), min_df=2, max_df=.9
+        ).fit(x_array)
+        self.tfidf_matrix = self.tfidf_vectorizer.transform(x_array)
+
+    def guess(self, questions: List[str], max_n_guesses: Optional[int]) -> List[List[Tuple[str, float]]]:
+        representations = self.tfidf_vectorizer.transform(questions)
+        guess_matrix = self.tfidf_matrix.dot(representations.T).T
+        guess_indices = (-guess_matrix).toarray().argsort(axis=1)[:, 0:max_n_guesses]
+        guesses = []
+        for i in range(len(questions)):
+            idxs = guess_indices[i]
+            guesses.append([(self.i_to_ans[j], guess_matrix[i, j]) for j in idxs])
+
+        return guesses
+
+    def save(self):
+        with open(MODEL_PATH, 'wb') as f:
+            pickle.dump({
+                'i_to_ans': self.i_to_ans,
+                'tfidf_vectorizer': self.tfidf_vectorizer,
+                'tfidf_matrix': self.tfidf_matrix
+            }, f)
+
+    @classmethod
+    def load(cls):
+        with open(MODEL_PATH, 'rb') as f:
+            params = pickle.load(f)
+            guesser = TfidfGuesser()
+            guesser.tfidf_vectorizer = params['tfidf_vectorizer']
+            guesser.tfidf_matrix = params['tfidf_matrix']
+            guesser.i_to_ans = params['i_to_ans']
+            return guesser
 
 
 def create_app(enable_batch=True):
     tfidf_guesser = TfidfContextGuesser.load()
     drqa_predictor = DrqaPredictor.load()
+#    drqa_predictor.cuda()
     print("loaded models")
     app = Flask(__name__)
 
@@ -277,7 +300,7 @@ def create_app(enable_batch=True):
     def status():
         return jsonify({
             'batch': enable_batch,
-            'batch_size': 200,
+            'batch_size': 20,
             'ready': True
         })
 
