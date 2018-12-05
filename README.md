@@ -1,3 +1,14 @@
+This is a simple, baseline system that does well on the question answering task "quiz bowl".  This system generates the baseline score on our leaderboard and demonstrates the IO profile we expect of Docker container submission.
+
+
+# Reference System
+
+We provide sample code which when combined with the provided docker container
+can answer Quiz Bowl questions. This should provide an example of how the
+codalab server interacts with the container as well as a simple yet
+surprisingly effective baseline. The simple system consists of a TF-IDF guesser
+and a threshold-based buzzer.
+
 # System Requirements
 
 All systems will take as input a question (sequence of words), and output an
@@ -8,7 +19,7 @@ the best current answer is as well as whether it is deciding to buzz on the
 answer.
 
 ```bash
-$ http --form POST http://0.0.0.0:4861/api/1.0/quizbowl/act text='Name the the inventor of general relativity and the photoelectric effect'
+$ http POST http://0.0.0.0:4861/api/1.0/quizbowl/act text='Name the the inventor of general relativity and the photoelectric effect'
 HTTP/1.0 200 OK
 Content-Length: 41
 Content-Type: application/json
@@ -28,7 +39,7 @@ In addition to the `question_text` field shown in the `httpie` sample request we
  * `char_idx`: This corresponds on the server to `full_question[0:char_idx]` if `full_question` is the entire question.
  * `sent_idx`: The current sentence number.
  * `text` Question text up to `char_idx`
-
+ 
 ### Example
 
 ```json
@@ -39,6 +50,17 @@ In addition to the `question_text` field shown in the `httpie` sample request we
   "text": "At its premiere, the librettist of this opera portrayed a character who asks for a glass of wine with his dying wish"
 }
 ```
+
+### Optional Wikipedia paragraphs
+ Models can optionally (see the status API below) request providing retrieved Wikipedia paragraphs for each sentence of the questions. In that case,
+one more field, `wiki_paragraphs`, is added to the input. `wiki_paragraphs`
+is a list of the top-10 retrieved paragraphs for each completed
+question sentence. Each paragraph is a dictionary of two items:
+`paragaraph` which contains the paragraph text and `entities` which
+is a list of the extracted entity mentions from the paragraph. Each mention
+is formatted as a list of wikipedia page title, mention start index,
+mention end index, confidence score and wikipedia page id.
+We used [TagME](https://tagme.d4science.org/tagme/) to find the entity mentions.
 
 ## Output Format
 The output answer to each question is also a json object of two fields
@@ -66,14 +88,7 @@ script will return an error.
 * `ready`: return True if ready to accept requests
 * `batch`: True if model accepts batch API (see farther down), False otherwise
 * `batch_size`: If `batch` is true, an integer indicating max batch size
-
-# Reference System
-
-We provide sample code which when combined with the provided docker container
-can answer Quiz Bowl questions. This should provide an example of how the
-codalab server interacts with the container as well as a simple yet
-surprisingly effective baseline. The simple system consists of a TF-IDF guesser
-and a threshold-based buzzer.
+* `include_wiki_paragraphs`: True to request providing retrieved Wikipedia paragraphs for each question sentence.
 
 ## Installation
 
@@ -98,7 +113,7 @@ These commands are structured via `docker-compose CMD CONTAINER ARGS` where
 `CMD` is a `docker-compose` command, `CONTAINER` is either `qb` or `eval`, and
 `ARGS` runs inside of the container.
 
-1. `docker-compose run qb ./cli download`: This will download the training data to `data/`
+1. `docker-compose run qb ./cli download`: This will download the training data to `data/`. Add flag `--retrieve-paragraphs` to download retrieved Wikipedia paragraphs.
 2. `docker-compose run qb ./cli train`: This will train a model and place it in `src/tfidf.pickle`
 3. `docker-compose up`: This will start the web server in the foreground, `-d` for background, `ctrl-c` to stop
 4. `docker-compose run eval`: This will run the evaluation script
@@ -118,7 +133,7 @@ docker-compose up
 And then the `httpie` command from before:
 
 ```bash
-$ http --form POST http://0.0.0.0:4861/api/1.0/quizbowl/act text='Name the the inventor of general relativity and the photoelectric effect'
+$ http POST http://0.0.0.0:4861/api/1.0/quizbowl/act text='Name the the inventor of general relativity and the photoelectric effect'
 HTTP/1.0 200 OK
 Content-Length: 41
 Content-Type: application/json
@@ -160,7 +175,15 @@ At a high level:
 3. The evaluation script will run questions against the web API endpoint `/api/1.0/quizbowl/act`
 4. The evaluation script will output your scores to the standard out locally, or post to the leaderboard when run on codalab.
 
+## GPU
 
+You may be interested in using a GPU in which case these instructions should help. We have prepared a GPU docker image, but there are several things which are different from the normal one. Here we assume you are on a machine with a GPU, and want to run docker locally.
+1. On your local machine you need to have CUDA libraries installed. Installation is specific to OS and not covered here.
+2. Install `nvidia-docker` which allows `docker` to use the host machine CUDA driver https://github.com/NVIDIA/nvidia-docker
+3. Instead of `docker-compose` you'll need to use `docker-compose -f docker-compose-gpu.yml` which tells `docker` to use `entilzha/quizbowl-gpu` instead of `entilzha/quizbowl`. This image has the appropriate CUDA libraries installed.
+4. To run you can use `nvidia-docker`, but this won't use the compose file we have provided. (Instructions untested here) you can use `nvidia-docker-compose` https://github.com/eywalker/nvidia-docker-compose as a workaround instead as described here https://hackernoon.com/docker-compose-gpu-tensorflow-%EF%B8%8F-a0e2011d36
+5. When submitting to codalab we recommend you use start with the following parameters after the `cl macro` command `--request-gpus 1 --request-cpus 2 --request-memory 12g --request-docker-image entilzha/quizbowl-gpu`
+6. Lastly, the image does not modify the base anaconda environment, but instead creates a new one named `qb`. For things to work you will need to run `source activate qb` at the top of `run.sh` and `cli` to switch to the new environment.
 
 # Maintainer Notes
 

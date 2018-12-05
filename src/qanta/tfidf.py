@@ -15,13 +15,13 @@ from qanta.dataset import QuizBowlDataset
 
 from drqa.reader import Predictor
 
-DRQA_MODEL_PATH = 'drqa.mdl'
+DRQA_MODEL_PATH = 'entity_drqa_1.mdl'
 MODEL_PATH = 'tfidf2.pickle'
 EMBEDDING_PATH = 'glove.840B.300d.txt'
 BUZZ_NUM_GUESSES = 10
 BUZZ_THRESHOLD = 0.3
 DRQA_THRESHOLD = 0.99
-
+possible_answers = None
 
 def guess_and_buzz(model, question_text) -> Tuple[str, bool]:
     guesses = model.guess([question_text], BUZZ_NUM_GUESSES)[0]
@@ -31,8 +31,9 @@ def guess_and_buzz(model, question_text) -> Tuple[str, bool]:
     return guesses[0][0], buzz
 
 
-def batch_guess_and_buzz(model, predictor, questions) -> List[Tuple[str, bool]]:
-    tfidf_guesses = model.guess([q["text"] for q in questions], BUZZ_NUM_GUESSES)
+def batch_guess_and_buzz_drqa(model, predictor, questions) -> List[Tuple[str, bool]]:
+    all_paras = [q['wiki_paragraphs'] for q in questions]
+    tfidf_guesses = model.guess_with_context([q["text"] for q in questions], all_paras, BUZZ_NUM_GUESSES)
     tfidf_results = []
     for guesses in tfidf_guesses:
         scores = [guess[1] for guess in guesses]
@@ -41,7 +42,6 @@ def batch_guess_and_buzz(model, predictor, questions) -> List[Tuple[str, bool]]:
         
     drqa_results = DrqaPredictor.batch_predict(predictor, questions)
         
-#    print("length of tfidf and drqa predictions:", len(tfidf_results), len(drqa_results))
     if len(tfidf_results) != len(drqa_results):
         raise ValueError("length of predictions from two methods are different")
     outputs = []
@@ -54,16 +54,82 @@ def batch_guess_and_buzz(model, predictor, questions) -> List[Tuple[str, bool]]:
     
     return outputs
 
-def batch_guess_and_buzz_cand(model, questions):
-    ques = [q["text"] for q in questions]
-    cands = [q["candidates"] for q in questions]
-    question_guesses = model.guess_with_cand(ques, cands, BUZZ_NUM_GUESSES)
+def batch_guess_and_buzz_context(tfidf_model, drqa_model, questions):
+    context_guesses = tfidf_model.guess_with_context([q["text"] for q in questions], 
+                                             [q['wiki_paragraphs'] for q in questions], BUZZ_NUM_GUESSES)
+    question_guesses = tfidf_model.guess([q["text"] for q in questions], BUZZ_NUM_GUESSES)
+    
+    if drqa_model is not None:
+        drqa_guesses = DrqaPredictor.batch_predict(drqa_model, questions)
+#    print("context",context_guesses)
+#    print("question",question_guesses)
+#    print("drqa",drqa_guesses)
     outputs = []
-    for guesses in question_guesses:
+    final_guesses = []
+    for i in range(len(questions)):
+        final_guesses.append(combine_guesses(question_guesses[i], context_guesses[i], drqa_guesses[i]))
+#    print("final", final_guesses)
+    for guesses in final_guesses:
         scores = [guess[1] for guess in guesses]
         buzz = scores[0] / sum(scores) >= BUZZ_THRESHOLD
         outputs.append((guesses[0][0], buzz))
+
     return outputs
+
+#for a question, combine different guesses
+def combine_guesses(question_guesses, context_guesses, drqa_guesses=None):
+    global possible_answers
+    if drqa_guesses is not None:
+        if len(context_guesses) != 0:
+            guesses = [g[0] for g in question_guesses]
+            scores = [g[1] for g in question_guesses]
+            for guess in context_guesses:
+                if guess[0] in guesses:
+                    scores[guesses.index(guess[0])] += guess[1]
+                else:
+                    guesses.append(guess[0])
+                    scores.append(guess[1])
+            for guess in drqa_guesses:
+                if guess[0] in possible_answers:
+                    s = guess[1]
+                    if guess[1] < 0.85:
+                        s *= 0.2
+                    if guess[0] in guesses:
+                        scores[guesses.index(guess[0])] += s
+                    else:
+                        guesses.append(guess[0])
+                        scores.append(s)
+            return list(sorted(zip(guesses, scores), key=lambda x: x[1], reverse=True))
+        else:
+            guesses = [g[0] for g in question_guesses]
+            scores = [g[1] for g in question_guesses]
+            for guess in drqa_guesses:
+                if guess[0] in possible_answers:
+                    s = guess[1]
+                    if guess[1] < 0.85:
+                        s *= 0.2
+                    if guess[0] in guesses:
+                        scores[guesses.index(guess[0])] += s
+                    else:
+                        guesses.append(guess[0])
+                        scores.append(s)
+            return list(sorted(zip(guesses, scores), key=lambda x: x[1], reverse=True))
+    
+    else:
+        if len(context_guesses) != 0:
+            guesses = [g[0] for g in question_guesses]
+            scores = [g[1] for g in question_guesses]
+            for guess in context_guesses:
+                if guess[0] in guesses:
+                    scores[guesses.index(guess[0])] += guess[1]
+                else:
+                    guesses.append(guess[0])
+                    scores.append(guess[1])
+            
+            return list(sorted(zip(guesses, scores), key=lambda x: x[1], reverse=True))
+        else:
+            return question_guesses
+    
 
 class DrqaPredictor:
     def __init__(self):
@@ -94,30 +160,52 @@ class DrqaPredictor:
     
     @classmethod
     def batch_predict(cls, predictor, questions):
-#        examples = []
-#        qids = []  #number of parallel contexts of each question
-#        for ques in questions:
-#            question_text = ques["text"]
-#            qids.append(len(ques["contexts"]))
-#            for context in ques["contexts"]:
-#                examples.append((context, question_text))
-#        predictions = predictor.predict_batch(
-#            examples, top_n=1
-#        )
-        
         examples = []
-        qids = []  #number of parallel contexts of each question
-        for ques in questions:
-            print(ques["question_idx"])
-            examples.append((ques["contexts"], ques["text"]))
-        predictions = predictor.predict_batch(
-            examples, top_n=1
-        )
-        results = []
+        qids = []
         for i in range(len(questions)):
-            results.append((predictions[i][0][0],predictions[i][0][1]))
-        
-#        results = []    #a list of output results (text, score)
+            ques = questions[i]
+            question_text = ques["text"]
+            contexts = ques['wiki_paragraphs']
+            if len(contexts) > 0:
+                for article in contexts:
+                    entities = ""
+                    for paras in article:
+                        for ent in paras["entities"]:
+                            if ent[0] is not None:
+                                e = ent[0]
+                                entities += (e + ",")
+                    if len(entities) > 0:
+                        examples.append((entities, question_text))
+                        qids.append(i)
+                    else:
+                        examples.append((question_text, question_text))
+                        qids.append(i) 
+            else:
+               examples.append((question_text, question_text))
+               qids.append(i) 
+                    
+#        print("examples",examples)
+#        print("qids",qids)
+        batch_size = 128
+        results = {}
+        for i in tqdm(range(0, len(examples), batch_size)):
+            predictions = predictor.predict_batch(
+                examples[i:min(i+batch_size, len(examples))], top_n=2
+            )
+#            print("pred:",predictions)
+            for j in range(len(predictions)):
+                result = [(p[0], float(p[1])) for p in predictions[j]]
+                qid = qids[i+j]
+                if qid not in results.keys():
+                    results[qid] = []
+                results[qid].append(result)
+#        print("res",results)
+        outputs = []    #a list of output results (text, score)
+        for i in range(len(questions)):
+            q_res = [(r[0].replace(" ","_"), r[1]) for subres in results[i] for r in subres]
+            q_res.sort(key=lambda x: x[1], reverse=True)
+#            print(q_res)
+            outputs.append(q_res)
 #        t = 0
 #        for i in range(len(questions)):
 #            best_guess = None
@@ -129,7 +217,7 @@ class DrqaPredictor:
 #                t += 1
 #            results.append((best_guess, best_score))
 #        print(t, len(predictions))
-        return results
+        return outputs
     
     @classmethod
     def load(cls):
@@ -145,7 +233,7 @@ class TfidfContextGuesser:
     def __init__(self):
         self.tfidf_vectorizer = None
         self.tfidf_matrix = None
-#        self.i_to_ans = None
+        self.i_to_ans = None
         self.ans_to_i = None
     
     def train(self, training_data) -> None:
@@ -163,29 +251,53 @@ class TfidfContextGuesser:
             y_array.append(ans)
 
         self.ans_to_i = {ans: i for i, ans in enumerate(y_array)}
+        self.i_to_ans = {i: ans for i, ans in enumerate(y_array)}
         self.tfidf_vectorizer = TfidfVectorizer(
             ngram_range=(1, 3), min_df=2, max_df=.9
         ).fit(x_array)
         self.tfidf_matrix = self.tfidf_vectorizer.transform(x_array)
     
+    def guess(self, questions: List[str], max_n_guesses: Optional[int]) -> List[List[Tuple[str, float]]]:
+        representations = self.tfidf_vectorizer.transform(questions)
+        guess_matrix = self.tfidf_matrix.dot(representations.T).T
+        guess_indices = (-guess_matrix).toarray().argsort(axis=1)[:, 0:max_n_guesses]
+        guesses = []
+        for i in range(len(questions)):
+            idxs = guess_indices[i]
+            guesses.append([(self.i_to_ans[j], guess_matrix[i, j]) for j in idxs])
+
+        return guesses
+    
+    def guess_with_context(self, questions: List[str], contexts, max_n_guesses: Optional[int]):
+        candidates = []
+#        print(contexts)
+        for con in contexts:
+            if len(con) == 0:
+                candidates.append([])
+            else:
+                cand = []
+                for c in con:
+                    for para in c:
+                        for en in para["entities"]:
+                            if en[0] is not None and en[0].replace(" ", "_") not in cand:
+                                cand.append(en[0].replace(" ", "_")) 
+#                print(len(cand))
+                candidates.append(cand)
+                
+        return self.guess_with_cand(questions, candidates, max_n_guesses)
+    
     def guess_with_cand(self, questions: List[str], candidates: List[List[str]], max_n_guesses: Optional[int]) -> List[List[Tuple[str, float]]]:
         representations = self.tfidf_vectorizer.transform(questions)
         guess_matrix = self.tfidf_matrix.dot(representations.T).T
         guesses = []
-
-#        for i in range(len(questions)):
-#            idxs = guess_indices[i]
-#            guesses.append([(self.i_to_ans[j], guess_matrix[i, j]) for j in idxs if self.i_to_ans[j].replace("_"," ") in candidates[i]])
-
         for i in range(len(questions)):
-            cands = [cand.replace(" ", "_") for cand in candidates[i] if cand is not None and cand.replace(" ", "_") in self.ans_to_i.keys()]
+#            print("candidates number:",len(candidates[i]))
+#            print(candidates[i])
+            cands = [cand for cand in candidates[i] if cand in self.ans_to_i.keys()]
             cand_ind = [self.ans_to_i[c] for c in cands]
             scores = [guess_matrix[i, j] for j in cand_ind]
             guess = sorted(zip(cands, scores), key=lambda x: x[1], reverse=True)
-#            print(len(guess))
             guesses.append(guess[:max_n_guesses])
-            
-        
 #        for i in range(len(questions)):
 #            guess = []
 #            for cand in candidates[i]:
@@ -198,13 +310,14 @@ class TfidfContextGuesser:
 #            if i % 500 == 0:
 #                print(i, ":")
 #                print(guess)
-
+#        print(len(guesses))
         return guesses
 
     def save(self):
         with open(MODEL_PATH, 'wb') as f:
             pickle.dump({
                 'ans_to_i': self.ans_to_i,
+                'i_to_ans': self.i_to_ans,
                 'tfidf_vectorizer': self.tfidf_vectorizer,
                 'tfidf_matrix': self.tfidf_matrix
             }, f)
@@ -217,7 +330,7 @@ class TfidfContextGuesser:
             guesser.tfidf_vectorizer = params['tfidf_vectorizer']
             guesser.tfidf_matrix = params['tfidf_matrix']
             guesser.ans_to_i = params['ans_to_i']
-#            guesser.i_to_ans = params['i_to_ans']
+            guesser.i_to_ans = params['i_to_ans']
             return guesser
 
 class TfidfGuesser:
@@ -279,6 +392,8 @@ class TfidfGuesser:
 def create_app(enable_batch=True):
     tfidf_guesser = TfidfContextGuesser.load()
     drqa_predictor = DrqaPredictor.load()
+    global possible_answers
+    possible_answers = tfidf_guesser.ans_to_i.keys()
     print("loaded models")
     app = Flask(__name__)
 
@@ -299,8 +414,9 @@ def create_app(enable_batch=True):
     def status():
         return jsonify({
             'batch': enable_batch,
-            'batch_size': 20,
-            'ready': True
+            'batch_size': 200,
+            'ready': True,
+            'include_wiki_paragraphs': True
         })
 
     @app.route('/api/1.0/quizbowl/batch_act', methods=['POST'])
@@ -308,16 +424,16 @@ def create_app(enable_batch=True):
         questions = [q for q in request.json['questions']]
         return jsonify([
             {'guess': guess, 'buzz': True if buzz else False}
-            for guess, buzz in batch_guess_and_buzz(tfidf_guesser, drqa_predictor, questions)
+            for guess, buzz in batch_guess_and_buzz_context(tfidf_guesser, drqa_predictor, questions)
         ])
     
-    @app.route('/api/1.0/quizbowl/batch_act_cand', methods=['POST'])
-    def batch_act_cand():
-        questions = [q for q in request.json['questions']]
-        return jsonify([
-            {'guess': guess, 'buzz': True if buzz else False}
-            for guess, buzz in batch_guess_and_buzz_cand(tfidf_guesser, questions)
-        ])
+#    @app.route('/api/1.0/quizbowl/batch_act_cand', methods=['POST'])
+#    def batch_act_cand():
+#        questions = [q for q in request.json['questions']]
+#        return jsonify([
+#            {'guess': guess, 'buzz': True if buzz else False}
+#            for guess, buzz in batch_guess_and_buzz_cand(tfidf_guesser, questions)
+#        ])
 
     return app
 
@@ -369,11 +485,12 @@ def drqa_train():
 
 @cli.command()
 @click.option('--local-qanta-prefix', default='data/')
-def download(local_qanta_prefix):
+@click.option('--retrieve-paragraphs', default=False, is_flag=True)
+def download(local_qanta_prefix, retrieve_paragraphs):
     """
     Run once to download qanta data to data/. Runs inside the docker container, but results save to host machine
     """
-    util.download(local_qanta_prefix)
+    util.download(local_qanta_prefix, retrieve_paragraphs)
 
 
 if __name__ == '__main__':

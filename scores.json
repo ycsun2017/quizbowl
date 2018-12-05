@@ -1,1 +1,1 @@
-{"sent1_acc": 0.05, "eoq_acc": 0.525, "curve": 0.0}
+{"first_acc": 0.0, "end_acc": 1.0, "expected_wins": 0.0, "expected_wins_optimal": 0.6569212952279929}
