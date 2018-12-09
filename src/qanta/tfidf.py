@@ -17,7 +17,6 @@ from drqa.reader import Predictor
 
 DRQA_MODEL_PATH = 'entity_drqa_1.mdl'
 MODEL_PATH = 'tfidf2.pickle'
-EMBEDDING_PATH = 'glove.840B.300d.txt'
 BUZZ_NUM_GUESSES = 10
 BUZZ_THRESHOLD = 0.3
 DRQA_THRESHOLD = 0.99
@@ -70,8 +69,9 @@ def batch_guess_and_buzz_context(tfidf_model, drqa_model, questions):
         final_guesses.append(combine_guesses(question_guesses[i], context_guesses[i], drqa_guesses[i]))
 #    print("final", final_guesses)
     for guesses in final_guesses:
-        scores = [guess[1] for guess in guesses]
-        buzz = scores[0] / sum(scores) >= BUZZ_THRESHOLD
+#        scores = [guess[1] for guess in guesses]
+#        buzz = scores[0] / sum(scores) >= BUZZ_THRESHOLD
+        buzz = guesses[0][1] >= 2.5
         outputs.append((guesses[0][0], buzz))
 
     return outputs
