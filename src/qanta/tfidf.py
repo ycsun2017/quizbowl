@@ -18,7 +18,7 @@ from drqa.reader import Predictor
 DRQA_MODEL_PATH = 'entity_drqa_1.mdl'
 MODEL_PATH = 'tfidf2.pickle'
 BUZZ_NUM_GUESSES = 10
-BUZZ_THRESHOLD = 0.3
+BUZZ_THRESHOLD = 0.2
 DRQA_THRESHOLD = 0.99
 possible_answers = None
 
@@ -58,20 +58,28 @@ def batch_guess_and_buzz_context(tfidf_model, drqa_model, questions):
                                              [q['wiki_paragraphs'] for q in questions], BUZZ_NUM_GUESSES)
     question_guesses = tfidf_model.guess([q["text"] for q in questions], BUZZ_NUM_GUESSES)
     
-    if drqa_model is not None:
-        drqa_guesses = DrqaPredictor.batch_predict(drqa_model, questions)
+#    drqa_guesses = None
+#    if drqa_model is not None:
+#        drqa_guesses = DrqaPredictor.batch_predict(drqa_model, questions)
 #    print("context",context_guesses)
 #    print("question",question_guesses)
 #    print("drqa",drqa_guesses)
     outputs = []
     final_guesses = []
     for i in range(len(questions)):
-        final_guesses.append(combine_guesses(question_guesses[i], context_guesses[i], drqa_guesses[i]))
+        drqa_guess = None
+        if question_guesses[i][0][1] < 0.5 and drqa_model is not None:
+            print("call drqa", end=",")
+            drqa_guess = DrqaPredictor.predict(drqa_model, questions[i]["text"], questions[i]["wiki_paragraphs"])
+        if drqa_guess:
+            final_guesses.append(combine_guesses(question_guesses[i], context_guesses[i], drqa_guess))
+        else:
+            final_guesses.append(combine_guesses(question_guesses[i], context_guesses[i]))
 #    print("final", final_guesses)
     for guesses in final_guesses:
-#        scores = [guess[1] for guess in guesses]
-#        buzz = scores[0] / sum(scores) >= BUZZ_THRESHOLD
-        buzz = guesses[0][1] >= 2.5
+        scores = [guess[1] for guess in guesses]
+        buzz = scores[0] / sum(scores) >= BUZZ_THRESHOLD
+#        buzz = guesses[0][1] >= 1.5
         outputs.append((guesses[0][0], buzz))
 
     return outputs
@@ -140,23 +148,46 @@ class DrqaPredictor:
     
     @classmethod
     def predict(cls, predictor, question_text, contexts):
+        if len(contexts) == 0:
+            return None
+        
         examples = []
-        for context in contexts:
-            examples.append((context, question_text))
+#        for context in contexts:
+#            examples.append((context, question_text))
+        for article in contexts:
+            entities = ""
+            for paras in article:
+                for ent in paras["entities"]:
+                    if ent[0] is not None:
+                        e = ent[0]
+                        entities += (e + ",")
+            if len(entities) > 0:
+                examples.append((entities, question_text))
+        if len(examples) == 0:
+            return None
 
         predictions = predictor.predict_batch(
             examples, top_n=1
         )
+        
+        guesses = [(pred[0][0], pred[0][1]) for pred in predictions]
+        guesses.sort(key=lambda x: x[1], reverse=True)
+        
+        if len(guesses) > 10:
+            return guesses[:10]
+        else:
+            return guesses
+            
 #        print("pred", predictions)
-        best_guess = None
-        best_score = -1
-        for j in range(len(predictions)): #for each question
-    #        result = [(p[0], float(p[1])) for p in predictions[j]] #multiple guesses
-            if predictions[j][0][1] > best_score:
-                best_guess = predictions[j][0][0]
-                best_score = predictions[j][0][1]
-#        print("result:",best_guess, best_score)
-        return best_guess, best_score
+#        best_guess = None
+#        best_score = -1
+#        for j in range(len(predictions)): #for each question
+#    #        result = [(p[0], float(p[1])) for p in predictions[j]] #multiple guesses
+#            if predictions[j][0][1] > best_score:
+#                best_guess = predictions[j][0][0]
+#                best_score = predictions[j][0][1]
+##        print("result:",best_guess, best_score)
+#        return best_guess, best_score
     
     @classmethod
     def batch_predict(cls, predictor, questions):

@@ -115,7 +115,7 @@ def get_answer_single(url, questions, char_step_size, wiki_paragraphs=None):
     return answers
 
 
-def get_answer_batch(url, questions, char_step_size, batch_size, wiki_paragraphs=None):
+def get_answer_batch(url, questions, char_step_size, batch_size, output_dir, wiki_paragraphs=None):
     elog.info('Collecting responses to questions in batches', batch_size)
     answers = []
     batch_ids = list(range(0, len(questions), batch_size))
@@ -134,7 +134,10 @@ def get_answer_batch(url, questions, char_step_size, batch_size, wiki_paragraphs
             for i, r in enumerate(resp):
                 q = query['questions'][i]
                 q.update(r)
+                q.pop('wiki_paragraphs')
                 answers[qids[i]].append(q)
+        with open(output_dir, 'w') as f:
+            json.dump(answers, f)
     return answers
 
 
@@ -193,6 +196,7 @@ def evaluate(input_dir, retrieved_paragraphs_path, output_dir, score_dir, char_s
             answers = get_answer_batch(url, questions,
                                        char_step_size,
                                        status['batch_size'],
+                                       output_dir,
                                        wiki_paragraphs=retrieved_paragraphs)
         else:
             url = f'http://{hostname}:4861/api/1.0/quizbowl/act'
