@@ -58,21 +58,22 @@ def batch_guess_and_buzz_context(tfidf_model, drqa_model, questions):
                                              [q['wiki_paragraphs'] for q in questions], BUZZ_NUM_GUESSES)
     question_guesses = tfidf_model.guess([q["text"] for q in questions], BUZZ_NUM_GUESSES)
     
-#    drqa_guesses = None
-#    if drqa_model is not None:
-#        drqa_guesses = DrqaPredictor.batch_predict(drqa_model, questions)
+    drqa_guesses = None
+    if drqa_model is not None:
+        drqa_guesses = DrqaPredictor.batch_predict(drqa_model, questions)
 #    print("context",context_guesses)
 #    print("question",question_guesses)
 #    print("drqa",drqa_guesses)
     outputs = []
     final_guesses = []
     for i in range(len(questions)):
-        drqa_guess = None
-        if question_guesses[i][0][1] < 0.5 and drqa_model is not None:
-            print("call drqa", end=",")
-            drqa_guess = DrqaPredictor.predict(drqa_model, questions[i]["text"], questions[i]["wiki_paragraphs"])
-        if drqa_guess:
-            final_guesses.append(combine_guesses(question_guesses[i], context_guesses[i], drqa_guess))
+#        drqa_guess = None
+#        print("tfidf guess:", question_guesses[i][0])
+#        if question_guesses[i][0][1] < 0.5 and drqa_model is not None:
+#            print("drqa")
+            #drqa_guess = DrqaPredictor.predict(drqa_model, questions[i]["text"], questions[i]["wiki_paragraphs"])
+        if drqa_guesses:
+            final_guesses.append(combine_guesses(question_guesses[i], context_guesses[i], drqa_guesses[i]))
         else:
             final_guesses.append(combine_guesses(question_guesses[i], context_guesses[i]))
 #    print("final", final_guesses)
@@ -148,6 +149,7 @@ class DrqaPredictor:
     
     @classmethod
     def predict(cls, predictor, question_text, contexts):
+        print("using drqa", end=',')
         if len(contexts) == 0:
             return None
         
@@ -170,7 +172,7 @@ class DrqaPredictor:
             examples, top_n=1
         )
         
-        guesses = [(pred[0][0], pred[0][1]) for pred in predictions]
+        guesses = [(pred[0][0].replace(" ","_"), pred[0][1]) for pred in predictions]
         guesses.sort(key=lambda x: x[1], reverse=True)
         
         if len(guesses) > 10:
@@ -195,25 +197,27 @@ class DrqaPredictor:
         qids = []
         for i in range(len(questions)):
             ques = questions[i]
-            question_text = ques["text"]
-            contexts = ques['wiki_paragraphs']
-            if len(contexts) > 0:
-                for article in contexts:
-                    entities = ""
-                    for paras in article:
-                        for ent in paras["entities"]:
-                            if ent[0] is not None:
-                                e = ent[0]
-                                entities += (e + ",")
-                    if len(entities) > 0:
-                        examples.append((entities, question_text))
-                        qids.append(i)
-                    else:
-                        examples.append((question_text, question_text))
-                        qids.append(i) 
-            else:
-               examples.append((question_text, question_text))
-               qids.append(i) 
+            #only drqa in this case
+            if ques['sent_index'] <= 5 and ques['sent_index'] >= 3:
+                question_text = ques["text"]
+                contexts = ques['wiki_paragraphs']
+                if len(contexts) > 0:
+                    for article in contexts:
+                        entities = ""
+                        for paras in article:
+                            for ent in paras["entities"]:
+                                if ent[0] is not None:
+                                    e = ent[0]
+                                    entities += (e + ",")
+                        if len(entities) > 0:
+                            examples.append((entities, question_text))
+                            qids.append(i)
+                        else:
+                            examples.append((question_text, question_text))
+                            qids.append(i) 
+                else:
+                   examples.append((question_text, question_text))
+                   qids.append(i) 
                     
 #        print("examples",examples)
 #        print("qids",qids)
@@ -233,21 +237,13 @@ class DrqaPredictor:
 #        print("res",results)
         outputs = []    #a list of output results (text, score)
         for i in range(len(questions)):
-            q_res = [(r[0].replace(" ","_"), r[1]) for subres in results[i] for r in subres]
-            q_res.sort(key=lambda x: x[1], reverse=True)
-#            print(q_res)
-            outputs.append(q_res)
-#        t = 0
-#        for i in range(len(questions)):
-#            best_guess = None
-#            best_score = -1
-#            for j in range(qids[i]): #for each question
-#                if predictions[t][0][1] > best_score:
-#                    best_guess = predictions[t][0][0]
-#                    best_score = predictions[t][0][1]
-#                t += 1
-#            results.append((best_guess, best_score))
-#        print(t, len(predictions))
+            ques = questions[i]
+            if ques['sent_index'] <= 5 and ques['sent_index'] >= 3:
+                q_res = [(r[0].replace(" ","_"), r[1]) for subres in results[i] for r in subres]
+                q_res.sort(key=lambda x: x[1], reverse=True)
+                outputs.append(q_res)
+            else:
+                outputs.append([])
         return outputs
     
     @classmethod
