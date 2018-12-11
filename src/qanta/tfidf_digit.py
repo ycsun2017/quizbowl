@@ -21,11 +21,11 @@ MODEL_PATH = 'tfidf2.pickle'
 DIGIT_PATH = 'digits.output.json'
 BUZZ_NUM_GUESSES = 10
 BUZZ_THRESHOLD = 0.15
-#DRQA_THRESHOLD = 0.99
+DRQA_THRESHOLD = 0.99
 possible_answers = None
 
-def guess_and_buzz_context(tfidf_model, drqa_model, question_text, contexts) -> Tuple[str, bool]:
-    guesses = tfidf_model.guess([question_text], BUZZ_NUM_GUESSES)[0]
+def guess_and_buzz(model, question_text) -> Tuple[str, bool]:
+    guesses = model.guess([question_text], BUZZ_NUM_GUESSES)[0]
     scores = [guess[1] for guess in guesses]
     buzz = scores[0] / sum(scores) >= BUZZ_THRESHOLD
     
@@ -321,6 +321,8 @@ class TfidfContextGuesser:
         guess_matrix = self.tfidf_matrix.dot(representations.T).T
         guesses = []
         for i in range(len(questions)):
+#            print("candidates number:",len(candidates[i]))
+#            print(candidates[i])
             digits = re.findall(r'\d+', questions[i])
             digits = [int(digit) for digit in digits if int(digit) > 500]
             answer = []
@@ -347,11 +349,6 @@ class TfidfContextGuesser:
             guess = sorted(guess, key=lambda x: x[1], reverse=True)
             # print (guess[:max_n_guesses])
             guesses.append(guess[:max_n_guesses])
-#            cands = [cand for cand in candidates[i] if cand in self.ans_to_i.keys()]
-#            cand_ind = [self.ans_to_i[c] for c in cands]
-#            scores = [guess_matrix[i, j] for j in cand_ind]
-#            guess = sorted(zip(cands, scores), key=lambda x: x[1], reverse=True)
-#            guesses.append(guess[:max_n_guesses])
 #        for i in range(len(questions)):
 #            guess = []
 #            for cand in candidates[i]:
@@ -361,7 +358,10 @@ class TfidfContextGuesser:
 #                        guess.append((cand1, guess_matrix[i, self.ans_to_i[cand1]]))
 #            guess.sort(key=lambda x: x[1], reverse=True)
 #            guesses.append(guess[:10])
-
+#            if i % 500 == 0:
+#                print(i, ":")
+#                print(guess)
+#        print(len(guesses))
         return guesses
 
     def save(self):
@@ -382,18 +382,18 @@ class TfidfContextGuesser:
             guesser.tfidf_matrix = params['tfidf_matrix']
             guesser.ans_to_i = params['ans_to_i']
             guesser.i_to_ans = params['i_to_ans']
-        guesser.digits = {}
-        with open(DIGIT_PATH) as json_data:
-            data = json.load(json_data)
-            for d in data:
-                digits = d['text']
-                page = d['page']
-                for digit in digits:
-                    if digit not in guesser.digits:
-                        guesser.digits[digit] = []
-                    guesser.digits[digit].append(page)
-            print("loaded digits")
-        return guesser
+            guesser.digits = {}
+            with open(DIGIT_PATH) as json_data:
+                data = json.load(json_data)
+                for d in data:
+                    digits = d['text']
+                    page = d['page']
+                    for digit in digits:
+                        if digit not in guesser.digits:
+                            guesser.digits[digit] = []
+                        guesser.digits[digit].append(page)
+            print (guesser.digits)
+            return guesser
 
 class TfidfGuesser:
     def __init__(self):
@@ -453,8 +453,8 @@ class TfidfGuesser:
 
 def create_app(enable_batch=True):
     tfidf_guesser = TfidfContextGuesser.load()
-#    drqa_predictor = DrqaPredictor.load()
-    drqa_predictor = None      #uncomment this if don't use drqa
+    # drqa_predictor = DrqaPredictor.load()
+    drqa_predictor = None
     global possible_answers
     possible_answers = tfidf_guesser.ans_to_i.keys()
     print("loaded models")
@@ -463,8 +463,13 @@ def create_app(enable_batch=True):
     @app.route('/api/1.0/quizbowl/act', methods=['POST'])
     def act():
         question = request.json['text']
-        contexts = request.json['wiki_paragraphs']
-        guess, buzz = guess_and_buzz_context(tfidf_guesser, drqa_predictor, question, contexts)
+        contexts = request.json['contexts']
+        guess, buzz = guess_and_buzz(tfidf_guesser, question)
+        
+        dq_guess, dq_score = DrqaPredictor.predict(drqa_predictor, question, contexts, BUZZ_NUM_GUESSES)
+        if dq_score > DRQA_THRESHOLD:
+            print("use drqa")
+            return jsonify({'guess': dq_guess.replace(" ","_"), 'buzz': True, 'drqa': True})
         
         return jsonify({'guess': guess, 'buzz': True if buzz else False})
 
@@ -472,7 +477,7 @@ def create_app(enable_batch=True):
     def status():
         return jsonify({
             'batch': enable_batch,
-            'batch_size': 40,
+            'batch_size': 200,
             'ready': True,
             'include_wiki_paragraphs': True
         })
