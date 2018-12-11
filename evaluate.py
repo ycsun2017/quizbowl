@@ -179,7 +179,7 @@ def evaluate(input_dir, retrieved_paragraphs_path, output_dir, score_dir, char_s
             include_wiki_paragraphs = False
 
         with open(input_dir) as f:
-            questions = json.load(f)['questions'][:20]
+            questions = json.load(f)['questions']
 
 
         if include_wiki_paragraphs:

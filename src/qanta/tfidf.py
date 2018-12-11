@@ -453,8 +453,8 @@ class TfidfGuesser:
 
 def create_app(enable_batch=True):
     tfidf_guesser = TfidfContextGuesser.load()
-#    drqa_predictor = DrqaPredictor.load()
-    drqa_predictor = None      #uncomment this if don't use drqa
+    drqa_predictor = DrqaPredictor.load()
+#    drqa_predictor = None      #uncomment this if don't use drqa
     global possible_answers
     possible_answers = tfidf_guesser.ans_to_i.keys()
     print("loaded models")
