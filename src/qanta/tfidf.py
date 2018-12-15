@@ -19,41 +19,57 @@ from drqa.reader import Predictor
 DRQA_MODEL_PATH = 'entity_drqa_1.mdl'
 MODEL_PATH = 'tfidf2.pickle'
 DIGIT_PATH = 'digits.output.json'
+USE_DIGIT = False
 BUZZ_NUM_GUESSES = 10
 BUZZ_THRESHOLD = 0.15
-#DRQA_THRESHOLD = 0.99
+USE_DRQA = True
+DRQA_LEFT = 4
+DRQA_RIGHT = 7
 possible_answers = None
 
 def guess_and_buzz_context(tfidf_model, drqa_model, question_text, contexts) -> Tuple[str, bool]:
-    guesses = tfidf_model.guess([question_text], BUZZ_NUM_GUESSES)[0]
-    scores = [guess[1] for guess in guesses]
+    context_guesses = tfidf_model.guess_with_context([question_text], 
+                                             [contexts], BUZZ_NUM_GUESSES)[0]
+    question_guesses = tfidf_model.guess([question_text], BUZZ_NUM_GUESSES)[0]
+    
+    drqa_guesses = None
+    if drqa_model is not None:
+        drqa_guesses = DrqaPredictor.predict(drqa_model, question_text, contexts)
+    
+    final_guesses = combine_guesses(question_guesses, context_guesses, drqa_guesses)
+    
+    scores = [guess[1] for guess in final_guesses]
     buzz = scores[0] / sum(scores) >= BUZZ_THRESHOLD
     
-    return guesses[0][0], buzz
-
-
-def batch_guess_and_buzz_drqa(model, predictor, questions) -> List[Tuple[str, bool]]:
-    all_paras = [q['wiki_paragraphs'] for q in questions]
-    tfidf_guesses = model.guess_with_context([q["text"] for q in questions], all_paras, BUZZ_NUM_GUESSES)
-    tfidf_results = []
-    for guesses in tfidf_guesses:
-        scores = [guess[1] for guess in guesses]
-        buzz = scores[0] / sum(scores) >= BUZZ_THRESHOLD
-        tfidf_results.append((guesses[0][0], buzz))
-        
-    drqa_results = DrqaPredictor.batch_predict(predictor, questions)
-        
-    if len(tfidf_results) != len(drqa_results):
-        raise ValueError("length of predictions from two methods are different")
-    outputs = []
-    for i in range(len(tfidf_results)):
-        if drqa_results[i][1] > DRQA_THRESHOLD:
-            print("use drqa")
-            outputs.append((drqa_results[i][0].replace(" ","_"), True))
-        else:
-            outputs.append(tfidf_results[i])
+#    guesses = tfidf_model.guess([question_text], BUZZ_NUM_GUESSES)[0]
+#    scores = [guess[1] for guess in guesses]
+#    buzz = scores[0] / sum(scores) >= BUZZ_THRESHOLD
     
-    return outputs
+    return final_guesses[0][0], buzz
+
+
+#def batch_guess_and_buzz_drqa(model, predictor, questions) -> List[Tuple[str, bool]]:
+#    all_paras = [q['wiki_paragraphs'] for q in questions]
+#    tfidf_guesses = model.guess_with_context([q["text"] for q in questions], all_paras, BUZZ_NUM_GUESSES)
+#    tfidf_results = []
+#    for guesses in tfidf_guesses:
+#        scores = [guess[1] for guess in guesses]
+#        buzz = scores[0] / sum(scores) >= BUZZ_THRESHOLD
+#        tfidf_results.append((guesses[0][0], buzz))
+#        
+#    drqa_results = DrqaPredictor.batch_predict(predictor, questions)
+#        
+#    if len(tfidf_results) != len(drqa_results):
+#        raise ValueError("length of predictions from two methods are different")
+#    outputs = []
+#    for i in range(len(tfidf_results)):
+#        if drqa_results[i][1] > DRQA_THRESHOLD:
+#            print("use drqa")
+#            outputs.append((drqa_results[i][0].replace(" ","_"), True))
+#        else:
+#            outputs.append(tfidf_results[i])
+#    
+#    return outputs
 
 def batch_guess_and_buzz_context(tfidf_model, drqa_model, questions):
     context_guesses = tfidf_model.guess_with_context([q["text"] for q in questions], 
@@ -200,7 +216,7 @@ class DrqaPredictor:
         for i in range(len(questions)):
             ques = questions[i]
             #only drqa in this case
-            if ques['sent_index'] <= 5 and ques['sent_index'] >= 3:
+            if ques['sent_index'] <= DRQA_RIGHT and ques['sent_index'] >= DRQA_LEFT:
                 question_text = ques["text"]
                 contexts = ques['wiki_paragraphs']
                 if len(contexts) > 0:
@@ -240,7 +256,7 @@ class DrqaPredictor:
         outputs = []    #a list of output results (text, score)
         for i in range(len(questions)):
             ques = questions[i]
-            if ques['sent_index'] <= 5 and ques['sent_index'] >= 3:
+            if ques['sent_index'] <= DRQA_RIGHT and ques['sent_index'] >= DRQA_LEFT:
                 q_res = [(r[0].replace(" ","_"), r[1]) for subres in results[i] for r in subres]
                 q_res.sort(key=lambda x: x[1], reverse=True)
                 outputs.append(q_res)
@@ -264,7 +280,8 @@ class TfidfContextGuesser:
         self.tfidf_matrix = None
         self.i_to_ans = None
         self.ans_to_i = None
-        self.digits = None
+        if USE_DIGIT:
+            self.digits = None
     
     def train(self, training_data) -> None:
         questions = training_data[0]
@@ -319,39 +336,43 @@ class TfidfContextGuesser:
     def guess_with_cand(self, questions: List[str], candidates: List[List[str]], max_n_guesses: Optional[int]) -> List[List[Tuple[str, float]]]:
         representations = self.tfidf_vectorizer.transform(questions)
         guess_matrix = self.tfidf_matrix.dot(representations.T).T
+#        print("guess matrix:",guess_matrix.shape)
         guesses = []
         for i in range(len(questions)):
-            digits = re.findall(r'\d+', questions[i])
-            digits = [int(digit) for digit in digits if int(digit) > 500]
-            answer = []
-            if len(digits) >= 1:
-                answer = self.digits[digits[0]]
-            for i in range(1,len(digits)):
-                if len(self.digits[digits[i]]) == 0:
-                    continue
-                answer = [value for value in answer if value in self.digits[digits[i]]]
-            answer = list(set(answer))
-            # print ("**************")
-            # print (digits)
-            # print (answer)
-            cands = [cand for cand in candidates[i] if cand in self.ans_to_i.keys()]
-            cand_ind = [self.ans_to_i[c] for c in cands]
-            scores = [guess_matrix[i, j] for j in cand_ind]
-            # guess = sorted(zip(cands, scores), key=lambda x: x[1], reverse=True)
-            guess = zip(cands,scores)
-            if len(answer) == 1:
-                guess = [(item[0],1.0) if item == answer[0] else item for item in guess]
+            if USE_DIGIT:
+                digits = re.findall(r'\d+', questions[i])
+                digits = [int(digit) for digit in digits if int(digit) > 500 and int(digit) in self.digits]
+                answer = []
+                if len(digits) >= 1:
+                    answer = self.digits[digits[0]]
+                for i in range(1,len(digits)):
+                    if len(self.digits[digits[i]]) == 0:
+                        continue
+                    answer = [value for value in answer if value in self.digits[digits[i]]]
+                answer = list(set(answer))
+                # print ("**************")
+                # print (digits)
+                # print (answer)
+                cands = [cand for cand in candidates[i] if cand in self.ans_to_i.keys()]
+                cand_ind = [self.ans_to_i[c] for c in cands]
+                scores = [guess_matrix[i, j] for j in cand_ind]
+                # guess = sorted(zip(cands, scores), key=lambda x: x[1], reverse=True)
+                guess = zip(cands,scores)
+                if len(answer) == 1:
+                    guess = [(item[0],1.0) if item == answer[0] else item for item in guess]
+                else:
+                    guess = [(item[0],item[1]+0.01*len(digits)) if item == answer else item for item in guess]
+                # guess = sorted(zip(cands, scores), key=lambda x: x[1], reverse=True)
+                guess = sorted(guess, key=lambda x: x[1], reverse=True)
+                # print (guess[:max_n_guesses])
+                guesses.append(guess[:max_n_guesses])
             else:
-                guess = [(item[0],item[1]+0.01*len(digits)) if item == answer else item for item in guess]
-            # guess = sorted(zip(cands, scores), key=lambda x: x[1], reverse=True)
-            guess = sorted(guess, key=lambda x: x[1], reverse=True)
-            # print (guess[:max_n_guesses])
-            guesses.append(guess[:max_n_guesses])
-#            cands = [cand for cand in candidates[i] if cand in self.ans_to_i.keys()]
-#            cand_ind = [self.ans_to_i[c] for c in cands]
-#            scores = [guess_matrix[i, j] for j in cand_ind]
-#            guess = sorted(zip(cands, scores), key=lambda x: x[1], reverse=True)
-#            guesses.append(guess[:max_n_guesses])
+                cands = [cand for cand in candidates[i] if cand in self.ans_to_i.keys()]
+#                print("number of candidates",len(cands))
+                cand_ind = [self.ans_to_i[c] for c in cands]
+                scores = [guess_matrix[i, j] for j in cand_ind]
+                guess = sorted(zip(cands, scores), key=lambda x: x[1], reverse=True)
+                guesses.append(guess[:max_n_guesses])
 #        for i in range(len(questions)):
 #            guess = []
 #            for cand in candidates[i]:
@@ -382,17 +403,18 @@ class TfidfContextGuesser:
             guesser.tfidf_matrix = params['tfidf_matrix']
             guesser.ans_to_i = params['ans_to_i']
             guesser.i_to_ans = params['i_to_ans']
-        guesser.digits = {}
-        with open(DIGIT_PATH) as json_data:
-            data = json.load(json_data)
-            for d in data:
-                digits = d['text']
-                page = d['page']
-                for digit in digits:
-                    if digit not in guesser.digits:
-                        guesser.digits[digit] = []
-                    guesser.digits[digit].append(page)
-            print("loaded digits")
+        if USE_DIGIT:
+            guesser.digits = {}
+            with open(DIGIT_PATH) as json_data:
+                data = json.load(json_data)
+                for d in data:
+                    digits = d['text']
+                    page = d['page']
+                    for digit in digits:
+                        if digit not in guesser.digits:
+                            guesser.digits[digit] = []
+                        guesser.digits[digit].append(page)
+                print("loaded digits")
         return guesser
 
 class TfidfGuesser:
@@ -453,8 +475,10 @@ class TfidfGuesser:
 
 def create_app(enable_batch=True):
     tfidf_guesser = TfidfContextGuesser.load()
-    drqa_predictor = DrqaPredictor.load()
-#    drqa_predictor = None      #uncomment this if don't use drqa
+    if USE_DRQA:
+        drqa_predictor = DrqaPredictor.load()
+    else:
+        drqa_predictor = None      
     global possible_answers
     possible_answers = tfidf_guesser.ans_to_i.keys()
     print("loaded models")

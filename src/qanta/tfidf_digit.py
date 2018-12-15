@@ -324,7 +324,7 @@ class TfidfContextGuesser:
 #            print("candidates number:",len(candidates[i]))
 #            print(candidates[i])
             digits = re.findall(r'\d+', questions[i])
-            digits = [int(digit) for digit in digits if int(digit) > 500]
+            digits = [int(digit) for digit in digits if int(digit) > 500 and int(digit) in self.digits]
             answer = []
             if len(digits) >= 1:
                 answer = self.digits[digits[0]]

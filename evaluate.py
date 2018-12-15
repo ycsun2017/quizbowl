@@ -134,7 +134,7 @@ def get_answer_batch(url, questions, char_step_size, batch_size, output_dir, wik
             for i, r in enumerate(resp):
                 q = query['questions'][i]
                 q.update(r)
-                q.pop('wiki_paragraphs')
+#                q.pop('wiki_paragraphs')
                 answers[qids[i]].append(q)
         with open(output_dir, 'w') as f:
             json.dump(answers, f)
@@ -179,7 +179,7 @@ def evaluate(input_dir, retrieved_paragraphs_path, output_dir, score_dir, char_s
             include_wiki_paragraphs = False
 
         with open(input_dir) as f:
-            questions = json.load(f)['questions']
+            questions = json.load(f)['questions'][:3]
 
 
         if include_wiki_paragraphs:

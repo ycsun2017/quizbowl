@@ -3,6 +3,7 @@ src/scores.json
 predictions.json
 src/glove.840B.300d.txt
 data/*
+src_bert/*
 models/*
 *.pickle
 *.mdl

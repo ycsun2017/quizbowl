@@ -1,1 +1,1 @@
-{"first_acc": 0.1, "end_acc": 0.6, "expected_wins": 0.26595113702765, "expected_wins_optimal": 0.5907878258383171}
+{"first_acc": 0.0, "end_acc": 1.0, "expected_wins": 0.8179059248186021, "expected_wins_optimal": 0.9003882089698981}
