@@ -1,6 +1,7 @@
-This is a simple, baseline system that does well on the question answering task "quiz bowl".  This system generates the baseline score on our leaderboard and demonstrates the IO profile we expect of Docker container submission.
+This is a question-answering system implemented by AmazingDH team.
+The trained model can be downloaded from https://drive.google.com/drive/folders/1BieK5p-ir-XP8QSqz2_LS5bJq59xkm-s?usp=sharing. Just put these files into /src directory!
 
-
+----------Follows are from the baseline system https://github.com/Pinafore/qanta-codalab----------
 # Reference System
 
 We provide sample code which when combined with the provided docker container
